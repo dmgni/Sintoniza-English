@@ -634,7 +634,7 @@ var LS={ get:function(k,d){ try{ var v=localStorage.getItem('sintoniza_'+k); ret
          set:function(k,v){ try{ localStorage.setItem('sintoniza_'+k, JSON.stringify(v)); }catch(e){} } };
 var S={ level:LS.get('level','B1'), topic:LS.get('topic','any'), mode:'listen', rate:LS.get('rate',0.9),
  speaking:false, count:0, showEn:false, showEs:false, showNote:false, picked:null, talkReveal:false,
- shadowPhase:'ready', recording:false, heard:'', typed:'', checked:false, queues:{}, audioMsg:'', chat:[], chatBusy:false, chatInput:'' };
+ shadowPhase:'ready', recording:false, heard:'', typed:'', checked:false, queues:{}, audioMsg:'', chat:[], chatBusy:false, chatInput:'', lastFailed:'' };
 var shadowTimers=[], speakTimer=null, voices=[], recog=null;
 
 /* ============ voz ============ */
@@ -750,7 +750,7 @@ function startChatMic(){ var SR=window.SpeechRecognition||window.webkitSpeechRec
 
 function sendChat(){
  var text=(S.chatInput||'').trim(); if(!text || S.chatBusy) return;
- S.chat.push({role:'user',content:text}); S.chatInput=''; S.chatBusy=true; markPractice(); render();
+ S.chat.push({role:'user',content:text}); S.chatInput=''; S.chatBusy=true; S.lastFailed=''; markPractice(); render();
  fetch(CHAT_BACKEND, { method:'POST', headers:{'Content-Type':'application/json','X-App-Password':LS.get('chatpass','')},
    body: JSON.stringify({ level:S.level, messages:S.chat }) })
  .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, status:r.status, d:d}; }); })
@@ -758,13 +758,14 @@ function sendChat(){
    S.chatBusy=false;
    if(!res.ok){
      if(res.status===401){ setAudioMsg("Contrasena incorrecta. Vuelve a entrar."); LS.set('chatpass',''); S.chat.pop(); render(); return; }
-     setAudioMsg("Error del servidor: "+((res.d&&res.d.error)||res.status)); render(); return;
+     var um=S.chat[S.chat.length-1]; S.lastFailed=(um&&um.role==='user')?um.content:''; S.chat.pop();
+     setAudioMsg(((res.d&&res.d.error)||("Error "+res.status))); render(); return;
    }
    var reply=(res.d&&res.d.reply)||"Sorry, I didn't catch that.";
    S.chat.push({role:'assistant',content:reply}); render();
    speak(reply);
  })
- .catch(function(){ S.chatBusy=false; setAudioMsg("No pude conectar con el servidor. Revisa tu conexion o la direccion del backend."); render(); });
+ .catch(function(){ S.chatBusy=false; var um=S.chat[S.chat.length-1]; S.lastFailed=(um&&um.role==='user')?um.content:''; if(um&&um.role==='user') S.chat.pop(); setAudioMsg("No pude conectar con el servidor. Revisa tu conexion."); render(); });
 }
 
 /* ============ UI ============ */
@@ -899,11 +900,13 @@ function render(){ var area=el('cardArea'); var c=current();
    +(S.chatBusy?'<div class="status listen">'+IC.ear+'<span>Pensando...</span></div>':'')
    +'<textarea class="dictarea" id="chatIn" placeholder="Escribe en ingles..." '+(S.chatBusy?'disabled':'')+'>'+(S.chatInput||'')+'</textarea>'
    +'<div class="controls">'+(supported?'<button class="btn '+(S.recording?'rec':'signal')+'" id="chatMic">'+IC.mic2+' '+(S.recording?'Escuchando...':'Hablar')+'</button>':'')+'<button class="btn primary" id="chatSend" '+(S.chatBusy?'disabled':'')+'>Enviar '+IC.arrow+'</button></div>'
+   +(S.lastFailed?'<div class="controls"><button class="btn signal" id="chatRetry">'+IC.rot+' Reintentar</button></div>':'')
    +'<div class="controls"><button class="btn mini" id="chatClear">Reiniciar charla</button><button class="btn mini" id="chatLogout">Salir</button></div>'
    +'<div class="meta"><span>Tus datos del chat no se guardan al cerrar</span></div></div>';
   area.querySelectorAll('.bubble[data-say]').forEach(function(b){ b.onclick=function(){ speak(b.dataset.say); }; });
   var ti=el('chatIn'); if(ti){ ti.oninput=function(){ S.chatInput=ti.value; }; }
   if(el('chatSend')) el('chatSend').onclick=function(){ if(ti) S.chatInput=ti.value; sendChat(); };
+  if(el('chatRetry')) el('chatRetry').onclick=function(){ S.chatInput=S.lastFailed; S.lastFailed=''; sendChat(); };
   if(el('chatMic')) el('chatMic').onclick=function(){ if(S.recording){ stopRecog(); render(); } else { startChatMic(); } };
   if(el('chatClear')) el('chatClear').onclick=function(){ S.chat=[]; S.chatInput=''; render(); };
   if(el('chatLogout')) el('chatLogout').onclick=function(){ LS.set('chatpass',''); S.chat=[]; render(); };
